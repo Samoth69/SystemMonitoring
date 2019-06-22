@@ -9,5 +9,8 @@
         <module name="systemMonitoringMaven" />
       </profile>
     </annotationProcessing>
+    <bytecodeTargetLevel>
+      <module name="systemMonitoringMaven" target="1.12" />
+    </bytecodeTargetLevel>
   </component>
 </project>
