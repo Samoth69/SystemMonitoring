@@ -2,6 +2,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import oshi.SystemInfo;
 import oshi.hardware.*;
 import oshi.software.os.OperatingSystem;
@@ -13,17 +14,29 @@ import java.sql.*;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.Marker;
 
 public class Main {
 
     //chemin fichier config
     public static final String pathConfigFile = "config.json";
 
-    //objet de log java
-    public Logger logger = LogManager.getLogger();
+    //objet de log java (oracle)
+    public static final Logger logger = LogManager.getLogger(Main.class);
+
+    //object de connection à la BDD
+    private Connection connBDD;
+
+    //object contenant toutes les informations matériel de l'envionnement
+    private SystemInfo si;
+
+    //object custom contenant la configuration de l'objet
+    private ConfigOBJ configuration;
+
+    //contient le nombre de thread dans le processeur de l'environnement
+    private final int thread_count;
 
     public static void main(String[] args) {
         new Main();
@@ -31,27 +44,25 @@ public class Main {
 
     //classe principale
     public Main() {
+        Configurator.setRootLevel(Level.DEBUG);
+        logger.log(Level.INFO, "if you see an error that start by 'ERROR StatusLogger No Log4j 2 configuration file found.' THIS IS NORMAL");
         logger.log(Level.INFO, "Starting");
-        ConfigOBJ config = readConfigFile();
+        configuration = readConfigFile();
+
+        logger.log(Level.INFO, "SystemInfo init");
+        si = new SystemInfo();
+        logger.log(Level.INFO, "setting environment variables");
+        thread_count = si.getHardware().getProcessor().getLogicalProcessorCount();
+        //OperatingSystem operatingSystem = si.getOperatingSystem();
+        //HardwareAbstractionLayer hardwareAbstractionLayer = si.getHardware();
+        //CentralProcessor centralProcessor = hardwareAbstractionLayer.getProcessor();
+        //ComputerSystem computerSystem = hardwareAbstractionLayer.getComputerSystem();
+        logger.info("SystemInfo init done");
         logger.log(Level.INFO, "trying to connect to database");
         try {
-            Connection conn = DriverManager.getConnection("jdbc:" + config.BDDAdress + "/" + config.BDDDatabase + "?useLegacyDatetimeCode=false&serverTimezone=Europe/Paris", config.BDDUsername, config.BDDPassword);
-            Statement st = conn.createStatement();
-            ResultSet rs = st.executeQuery("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA='" + config.BDDDatabase + "'" );
-            ResultSetMetaData rsmd = rs.getMetaData();
-
-            ArrayList<String> db = new ArrayList<>();
-
-            while (rs.next()) {
-                db.add(rs.getString(1));
-            }
-
-            logger.debug("Found the following table(s):");
-            for (String s : db) {
-                logger.debug(" - " + s);
-            }
-
-            conn.close();
+            connBDD = DriverManager.getConnection("jdbc:" + configuration.BDDAdress + "/" + configuration.BDDDatabase + "?useLegacyDatetimeCode=false&serverTimezone=Europe/Paris", configuration.BDDUsername, configuration.BDDPassword);
+            checkBDD();
+            connBDD.close();
         } catch (Exception e) {
             logger.fatal("Failed to connect to database");
             logger.fatal(e.toString());
@@ -62,19 +73,14 @@ public class Main {
 
 
 
-        logger.log(Level.INFO, "SystemInfo init");
-        SystemInfo si = new SystemInfo();
-        OperatingSystem operatingSystem = si.getOperatingSystem();
-        HardwareAbstractionLayer hardwareAbstractionLayer = si.getHardware();
-        CentralProcessor centralProcessor = hardwareAbstractionLayer.getProcessor();
-        ComputerSystem computerSystem = hardwareAbstractionLayer.getComputerSystem();
+/*
 
         final DecimalFormat df = new DecimalFormat("#.000");
         final int procCount = centralProcessor.getLogicalProcessorCount();
         ArrayList<NetworkIF> networkIF = new ArrayList<>();
         networkIF.addAll(Arrays.asList(hardwareAbstractionLayer.getNetworkIFs()));
         double add;
-
+*/
 
         logger.log(Level.INFO, "Starting main loop");
         while (true) {
@@ -148,20 +154,23 @@ public class Main {
             out.close();
             logger.log(Level.INFO, "basic config file successfully created, please edit it and restart the software");
             System.exit(0);
-        } catch(Exception e) {
+        } catch (Exception e) {
             logger.fatal("failed to write config file");
             logger.fatal(e.getMessage());
             System.exit(-1);
         }
     }
 
+    //lit le fichier config.
+    //si le fichier n'est pas trouvé, essaie de le créer.
     public ConfigOBJ readConfigFile() {
         Gson gson = new Gson();
-
+        logger.info("trying to reading config file");
         File f = new File(pathConfigFile);
-        if(f.exists() && !f.isDirectory()) {
-            try(FileInputStream inputStream = new FileInputStream(pathConfigFile)) {
+        if (f.exists() && !f.isDirectory()) {
+            try (FileInputStream inputStream = new FileInputStream(pathConfigFile)) {
                 String everything = IOUtils.toString(inputStream, "UTF-8");
+                logger.info("reading config file completed");
                 ConfigOBJ obj = gson.fromJson(everything, ConfigOBJ.class);
                 return obj;
             } catch (Exception e) {
@@ -175,5 +184,76 @@ public class Main {
             genConfigFile();
         }
         return null; //ne devrais jamais être atteind
+    }
+
+    //vérifie l'état de la BDD par rapport à la configuration matériel de l'ordinateur (notamment au nombre de thread présent)
+    //créer les tables et colonnes manquantes
+    public void checkBDD() {
+        try {
+            logger.info("checking database structure");
+            Statement st = connBDD.createStatement();
+            ResultSet rs;
+            ResultSetMetaData rsmd;
+
+            //récupère la liste des tables dans la db actuel
+            rs = st.executeQuery("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA='" + configuration.BDDDatabase + "'");
+
+            ArrayList<String> db = new ArrayList<>();
+            while (rs.next()) {
+                db.add(rs.getString(1));
+            }
+
+            logger.debug("Found the following table(s):");
+            for (String s : db) {
+                logger.debug(" - " + s);
+            }
+
+            String[] bd_cpu = {"cpu_day","cpu_week","cpu_month","cpu_year"};
+            for (String tb_name : bd_cpu) {
+                if (!db.contains(tb_name)) {
+                    logger.warn(tb_name + " not found, creating");
+                    StringBuilder req = new StringBuilder("CREATE TABLE `" + configuration.BDDDatabase + "`.`" + tb_name + "` (`date` DATETIME PRIMARY KEY DEFAULT CURRENT_TIMESTAMP , `cpu_total` DECIMAL(4,3) NOT NULL ,");
+                    for (int i = 0; i < thread_count; i++) {
+                        req.append("`cpu_" + i + "` DECIMAL(4,3) NOT NULL , ");
+                    }
+                    req.deleteCharAt(req.lastIndexOf(","));
+                    req.append(");");
+                    logger.debug(req);
+                    st.execute(req.toString());
+                } else {
+                    logger.info(tb_name + " found, checking structure");
+                    rs = st.executeQuery("DESCRIBE " + tb_name);
+                    //rsmd = rs.getMetaData();
+
+                    rs.last();
+                    final int expectedColCount = 2 + thread_count;
+
+                    //vérifie si le nombre de colonne dans la table est correct. (le +2 est là car on ajoute la colonne primaire (date) et cpu_total
+                    if (rs.getRow() == expectedColCount) {
+                        logger.info("structure seems good");
+                    } else {
+                        logger.warn("structure not good, correcting (" + tb_name + " should have " + expectedColCount + " but has " + rs.getRow() + ")");
+                        if (rs.getRow() > expectedColCount) {
+                            logger.warn("the number of column in table is higher than what it should be. ignoring");
+                        } else {
+                            logger.info("Adding missing row to " + tb_name);
+                            StringBuilder req = new StringBuilder("ALTER TABLE " + tb_name + " ");
+                            for (int i = rs.getRow(); i <= expectedColCount; i++) {
+                                //-2 car on ignore les deux colonnes additionnel (date et cpu_total)
+                                req.append("ADD COLUMN `cpu_" + (i - 2) + "` DECIMAL(4,3) NOT NULL ,");
+                            }
+                            req.deleteCharAt(req.lastIndexOf(","));
+                            req.append(";");
+                            logger.debug(req);
+                            st.execute(req.toString());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error(e.toString());
+        }
+
+
     }
 }
