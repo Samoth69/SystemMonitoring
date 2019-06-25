@@ -1,5 +1,6 @@
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.profesorfalken.jsensors.model.components.Disk;
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
@@ -31,6 +32,9 @@ public class Main {
 
     //object contenant toutes les informations matériel de l'envionnement
     private SystemInfo si;
+
+    //list des disques de l'environnement
+    private ArrayList<DiskStat> hdd = new ArrayList<>();
 
     //object custom contenant la configuration de l'objet
     private ConfigOBJ configuration;
@@ -82,8 +86,18 @@ public class Main {
         double add;
 */
 
+
+
+
         logger.log(Level.INFO, "Starting main loop");
         while (true) {
+
+            for (DiskStat ds : hdd) {
+                logger.debug(ds.getNameWithoutSpace() + "\t" + ds.getCurrentRead() + "Ko/s\t" + ds.getCurrentWrite() + "Ko/s");
+                ds.updateStat();
+            }
+            logger.debug("");
+
             /*System.out.println("cpu family: " + centralProcessor.getFamily());
             System.out.println("cpu identifier: " + centralProcessor.getIdentifier());
             System.out.println("cpu model: " + centralProcessor.getModel());
@@ -195,6 +209,8 @@ public class Main {
             ResultSet rs;
             ResultSetMetaData rsmd;
 
+            /////////////////////////////////////BDD///////////////////////////////////////////////
+
             //récupère la liste des tables dans la db actuel
             rs = st.executeQuery("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA='" + configuration.BDDDatabase + "'");
 
@@ -208,13 +224,15 @@ public class Main {
                 logger.debug(" - " + s);
             }
 
+            /////////////////////////////////////CPU///////////////////////////////////////////////
+
             String[] bd_cpu = {"cpu_day","cpu_week","cpu_month","cpu_year"};
             for (String tb_name : bd_cpu) {
                 if (!db.contains(tb_name)) {
                     logger.warn(tb_name + " not found, creating");
-                    StringBuilder req = new StringBuilder("CREATE TABLE `" + configuration.BDDDatabase + "`.`" + tb_name + "` (`date` DATETIME PRIMARY KEY DEFAULT CURRENT_TIMESTAMP , `cpu_total` DECIMAL(4,3) NOT NULL ,");
+                    StringBuilder req = new StringBuilder("CREATE TABLE " + tb_name + " (date TIMESTAMP WITH TIME ZONE PRIMARY KEY DEFAULT CURRENT_TIMESTAMP , cpu_total DECIMAL(4,3) NOT NULL ,");
                     for (int i = 0; i < thread_count; i++) {
-                        req.append("`cpu_" + i + "` DECIMAL(4,3) NOT NULL , ");
+                        req.append("cpu_" + i + " DECIMAL(4,3) NOT NULL , ");
                     }
                     req.deleteCharAt(req.lastIndexOf(","));
                     req.append(");");
@@ -240,7 +258,7 @@ public class Main {
                             StringBuilder req = new StringBuilder("ALTER TABLE " + tb_name + " ");
                             for (int i = rs.getRow(); i <= expectedColCount; i++) {
                                 //-2 car on ignore les deux colonnes additionnel (date et cpu_total)
-                                req.append("ADD COLUMN `cpu_" + (i - 2) + "` DECIMAL(4,3) NOT NULL ,");
+                                req.append("ADD COLUMN cpu_" + (i - 2) + " DECIMAL(4,3) NOT NULL ,");
                             }
                             req.deleteCharAt(req.lastIndexOf(","));
                             req.append(";");
@@ -248,6 +266,21 @@ public class Main {
                             st.execute(req.toString());
                         }
                     }
+                }
+            }
+
+            /////////////////////////////////////HDD///////////////////////////////////////////////
+
+            for (HWDiskStore dd : si.getHardware().getDiskStores()) {
+                hdd.add(new DiskStat(dd));
+            }
+
+            for (DiskStat ds : hdd) {
+                if (!db.contains(ds.getNameWithoutSpace())) {
+                    logger.warn(ds.getNameWithoutSpace() + " not found on database, creating");
+                    String req = "CREATE TABLE " + ds.getNameWithoutSpace() + "(date TIMESTAMP WITH TIME ZONE PRIMARY KEY DEFAULT CURRENT_TIMESTAMP, ";
+                } else {
+
                 }
             }
         } catch (Exception e) {
