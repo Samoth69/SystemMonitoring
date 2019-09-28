@@ -72,11 +72,6 @@ public class Main {
             logger.fatal(e.toString());
             e.printStackTrace();
         }
-
-
-
-
-
 /*
 
         final DecimalFormat df = new DecimalFormat("#.000");
@@ -85,10 +80,6 @@ public class Main {
         networkIF.addAll(Arrays.asList(hardwareAbstractionLayer.getNetworkIFs()));
         double add;
 */
-
-
-
-
         logger.log(Level.INFO, "Starting main loop");
         while (true) {
 
